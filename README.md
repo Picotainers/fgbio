@@ -1,5 +1,5 @@
 # fgbio
-Small, distroless-when-possible container for `fgbio`.
+Small compatibility-focused container for `fgbio`.
 
 ## how to use
 ```bash
