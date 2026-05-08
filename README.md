@@ -1,7 +1,12 @@
 # fgbio
-Small compatibility-focused container for `fgbio`.
+Small source-built container for `fgbio`.
 
-## how to use
+## Quick Usage
+
 ```bash
-docker run --rm -v "$(pwd):/data" picotainers/fgbio:latest --help
+# Pull the image
+docker pull docker.io/picotainers/fgbio:latest
+
+# Run the tool
+docker run --rm -v "$(pwd):/data" docker.io/picotainers/fgbio:latest --help
 ```

@@ -1,34 +1,45 @@
 # syntax=docker/dockerfile:1
-# Compatibility-first template for fgbio.
-# Installs package from Bioconda and copies the full conda runtime to avoid missing libs/interpreters.
 
-FROM mambaorg/micromamba:2.0.5-debian12-slim AS builder
+FROM debian:bookworm AS builder
 
-RUN micromamba install -y -n base -c conda-forge -c bioconda \
-    fgbio \
-    && micromamba clean --all --yes
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Resolve a runnable command for this package.
-# Prefer exact match, then underscore variant, then prefix match.
-RUN set -eux; \
-    BIN=""; \
-    if [ -x "/opt/conda/bin/fgbio" ]; then BIN="/opt/conda/bin/fgbio"; fi; \
-    if [ -z "$BIN" ]; then CAND="/opt/conda/bin/$(echo fgbio | tr '-' '_')"; [ -x "$CAND" ] && BIN="$CAND" || true; fi; \
-    if [ -z "$BIN" ]; then BIN="$(find /opt/conda/bin -maxdepth 1 -type f -perm -111 -name 'fgbio*' | head -n1 || true)"; fi; \
-    test -n "$BIN"; \
-    printf '%s\n' "$BIN" > /tmp/tool-entry-path
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    bash \
+    openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
 
-FROM mambaorg/micromamba:2.0.5-debian12-slim
+RUN curl -fsSL https://raw.githubusercontent.com/paulp/sbt-extras/master/sbt -o /usr/local/bin/sbt \
+    && chmod +x /usr/local/bin/sbt
 
-COPY --from=builder /opt/conda /opt/conda
-COPY --from=builder /tmp/tool-entry-path /tmp/tool-entry-path
+WORKDIR /opt
+RUN git clone --depth 1 https://github.com/fulcrumgenomics/fgbio.git
 
-USER root
-ENV PATH="/opt/conda/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/conda/lib:/opt/conda/lib64"
-RUN set -eux; \
-    BIN="$(cat /tmp/tool-entry-path)"; \
-    printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$BIN" > /usr/local/bin/fgbio
-RUN chmod +x /usr/local/bin/fgbio && rm -f /tmp/tool-entry-path
+WORKDIR /opt/fgbio
+RUN sbt -no-colors -batch assembly \
+    && JAR="$(find target/scala-2.13 -maxdepth 1 -type f -name 'fgbio-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -n 1)" \
+    && test -n "$JAR" \
+    && cp "$JAR" /tmp/fgbio.jar
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    openjdk-17-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /tmp/fgbio.jar /opt/fgbio/fgbio.jar
+RUN printf '#!/bin/sh\nexec java -jar /opt/fgbio/fgbio.jar "$@"\n' > /usr/local/bin/fgbio \
+    && chmod +x /usr/local/bin/fgbio
+RUN printf '%s\n' '#!/bin/sh' \
+    'if [ "${1:-}" = "fgbio" ]; then shift; fi' \
+    'exec /usr/local/bin/fgbio "$@"' > /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
+
 WORKDIR /data
-ENTRYPOINT ["/usr/local/bin/fgbio"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
